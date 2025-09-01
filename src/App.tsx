@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { getPublicKey, nip19, SimplePool } from "nostr-tools";
+import { nip19, SimplePool } from "nostr-tools";
 import type { Event } from "nostr-tools";
 import { fetchFormResponses } from "./nostr/formResponses";
 import { fetchFormTemplate } from "./nostr/fetchFormTemplate";
@@ -19,142 +19,20 @@ import { bytesToHex } from "nostr-tools/utils";
 import {
   Button,
   Card,
-  Col,
   Input,
   Layout,
   List,
-  Row,
   Space,
   Spin,
   Typography,
   message,
 } from "antd";
-import {
-  CopyOutlined,
-  DownloadOutlined,
-  PlusOutlined,
-} from "@ant-design/icons";
+import { PlusOutlined } from "@ant-design/icons";
+import { InvoiceCard } from "./components/InvoiceCard";
+import { HeaderBar } from "./components/HeaderBar";
 
-const { Header, Content, Footer } = Layout;
+const { Content, Footer } = Layout;
 const { Title, Text, Paragraph } = Typography;
-
-//
-// --- HeaderBar Component
-//
-function HeaderBar({
-  formId,
-  ownerPubkey,
-  formUrl,
-  onCopy,
-}: {
-  formId: string;
-  ownerPubkey: string;
-  formUrl: string | null;
-  onCopy: () => void;
-}) {
-  return (
-    <Header
-      style={{
-        background: "#fff",
-        padding: "0 16px",
-        borderBottom: "1px solid #eee",
-      }}
-    >
-      <Row
-        justify="space-between"
-        align="middle"
-        gutter={[8, 8]}
-        style={{ flexWrap: "wrap" }}
-      >
-        <Col flex="auto">
-          <Title level={3} style={{ margin: 0 }}>
-            Invoice Generator (Nostr)
-          </Title>
-        </Col>
-        {formId && ownerPubkey && (
-          <Col flex="none">
-            <Space>
-              <Paragraph
-                ellipsis={{ rows: 1, tooltip: formUrl || "No URL" }}
-                style={{ maxWidth: 220, margin: 0 }}
-              >
-                {formUrl ? (
-                  <a href={formUrl} target="_blank" rel="noopener noreferrer">
-                    {formUrl}
-                  </a>
-                ) : (
-                  <Text type="secondary">(No FormStr URL)</Text>
-                )}
-              </Paragraph>
-              {formUrl && (
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<CopyOutlined />}
-                  onClick={onCopy}
-                />
-              )}
-            </Space>
-          </Col>
-        )}
-      </Row>
-    </Header>
-  );
-}
-
-//
-// --- InvoiceCard Component
-//
-function InvoiceCard({
-  inv,
-  onDownload,
-}: {
-  inv: InvoiceData;
-  onDownload: (inv: InvoiceData) => void;
-}) {
-  return (
-    <Card
-      key={`${inv.authorPubkey}-${inv.invoiceNumber}-${inv.submittedAtISO}`}
-      style={{ marginBottom: 12 }}
-    >
-      <Row justify="space-between" align="middle">
-        <Col>
-          <Title level={5}>
-            {inv.clientName || "(No client)"}{" "}
-            {inv.company ? `— ${inv.company}` : ""}
-          </Title>
-          <Text>Invoice #: {inv.invoiceNumber}</Text>
-          <br />
-          <Text>
-            Date: {inv.invoiceDate} • Due: {inv.dueDate || "-"}
-          </Text>
-          <br />
-          <Text strong>Amount: {inv.totalAmount}</Text>
-          {inv.serviceDescription && (
-            <Paragraph italic style={{ marginTop: 8 }}>
-              {inv.serviceDescription}
-            </Paragraph>
-          )}
-          <Text>Payment: {inv.paymentInfo || "-"}</Text>
-          <br />
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            Submitted: {new Date(inv.submittedAtISO).toLocaleString()} • Author:{" "}
-            {inv.authorPubkey}
-          </Text>
-        </Col>
-        <Col>
-          <Button
-            type="primary"
-            icon={<DownloadOutlined />}
-            onClick={() => onDownload(inv)}
-          >
-            PDF
-          </Button>
-        </Col>
-      </Row>
-    </Card>
-  );
-}
 
 //
 // --- SetupForm Component
@@ -184,12 +62,12 @@ function SetupForm({
             Create Default Invoice Form
           </Button>
           <Input
-            placeholder="Enter FormStr URL"
+            placeholder="Enter Formstr URL"
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
             onPressEnter={onEnterUrl}
           />
-          <Button onClick={onEnterUrl}>Load FormStr URL</Button>
+          <Button onClick={onEnterUrl}>Load Formstr URL</Button>
         </Space>
       </Content>
     </Layout>
@@ -373,10 +251,13 @@ function App() {
         onCopy={handleCopyUrl}
       />
 
-      <Content style={{ padding: 16 }}>
+      <Content style={{ padding: "clamp(8px, 4vw, 16px)" }}>
         <Card style={{ marginBottom: 16 }}>
-          <Text strong>Form ID:</Text> {formId} <br />
-          <Text strong>Owner:</Text> {ownerPubkey}
+          <Text strong>Form ID:</Text>{" "}
+          <Text style={{ wordBreak: "break-all" }}>{formId}</Text>
+          <br />
+          <Text strong>Owner:</Text>{" "}
+          <Text style={{ wordBreak: "break-all" }}>{ownerPubkey}</Text>
         </Card>
 
         {loading ? (
