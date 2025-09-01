@@ -14,7 +14,7 @@ export type Tag = [string, string, string?, string?];
  * Field tag from the form specification.
  * Common shape: ["field", fieldId, fieldType, label?, choicesJson?]
  */
-export type Field = ["field", string, string, string?, string?];
+export type Field = ["field", string, string, string?, string?, string?];
 
 /**
  * The parsed invoice data used by the PDF generator / UI.

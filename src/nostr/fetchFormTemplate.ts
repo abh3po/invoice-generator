@@ -8,9 +8,9 @@ import type { Tag } from "../types";
  */
 
 const defaultRealys = [
-  "wss://relay.damus.ion",
+  "wss://relay.damus.io",
   "wss://relay.primal.net",
-  "wss://relay.nos.lol",
+  "wss://nos.lol",
 ];
 export const fetchFormTemplate = async (
   pubKey: string,
@@ -22,16 +22,17 @@ export const fetchFormTemplate = async (
 ): Promise<void> => {
   const relayList = relays?.length ? relays : defaultRealys;
   const ViewKey =
-    "bd1d39dbb0e447e4b6075c253df49561f22c8156a3bf320b9e7c6755a5acaea8";
+    "<View KEy for the form goes here, it is hardcoded here but should ideally be passed as a param>";
 
   const filter = {
     kinds: [30168],
     authors: [pubKey],
     "#d": [formIdentifier],
   };
-
+  console.log("Searching for", filter);
   const subCloser = pool.subscribeMany(relayList, [filter], {
     onevent: (event: Event) => {
+      console.log("GOt FORM EVENT", event);
       let formSpec: string[][] = [];
       console.log("Got event", event);
       try {

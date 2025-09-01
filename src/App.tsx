@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { SimplePool } from "nostr-tools";
+import { getPublicKey, nip19, SimplePool } from "nostr-tools";
 import type { Event } from "nostr-tools";
 import { fetchFormResponses } from "./nostr/formResponses";
 import { fetchFormTemplate } from "./nostr/fetchFormTemplate";
@@ -7,41 +7,248 @@ import { extractFieldMapFromFormSpec } from "./lib/extractFieldMap";
 import { decryptAndParseInvoiceEvent } from "./nostr/decryptAndParse";
 import { generateInvoicePDF } from "./lib/pdfGenerator";
 import type { InvoiceData, FieldMap } from "./types";
+import {
+  loadFormsFromLocalStorage,
+  saveFormToLocalStorage,
+} from "./nostr/utils";
+import { createDefaultFormEvent } from "./nostr/createFormEvent";
+import { naddrEncode, type DecodedNaddr } from "nostr-tools/nip19";
+import { bytesToHex } from "nostr-tools/utils";
 
+// --- Ant Design
+import {
+  Button,
+  Card,
+  Col,
+  Input,
+  Layout,
+  List,
+  Row,
+  Space,
+  Spin,
+  Typography,
+  message,
+} from "antd";
+import {
+  CopyOutlined,
+  DownloadOutlined,
+  PlusOutlined,
+} from "@ant-design/icons";
+
+const { Header, Content, Footer } = Layout;
+const { Title, Text, Paragraph } = Typography;
+
+//
+// --- HeaderBar Component
+//
+function HeaderBar({
+  formId,
+  ownerPubkey,
+  formUrl,
+  onCopy,
+}: {
+  formId: string;
+  ownerPubkey: string;
+  formUrl: string | null;
+  onCopy: () => void;
+}) {
+  return (
+    <Header
+      style={{
+        background: "#fff",
+        padding: "0 16px",
+        borderBottom: "1px solid #eee",
+      }}
+    >
+      <Row
+        justify="space-between"
+        align="middle"
+        gutter={[8, 8]}
+        style={{ flexWrap: "wrap" }}
+      >
+        <Col flex="auto">
+          <Title level={3} style={{ margin: 0 }}>
+            Invoice Generator (Nostr)
+          </Title>
+        </Col>
+        {formId && ownerPubkey && (
+          <Col flex="none">
+            <Space>
+              <Paragraph
+                ellipsis={{ rows: 1, tooltip: formUrl || "No URL" }}
+                style={{ maxWidth: 220, margin: 0 }}
+              >
+                {formUrl ? (
+                  <a href={formUrl} target="_blank" rel="noopener noreferrer">
+                    {formUrl}
+                  </a>
+                ) : (
+                  <Text type="secondary">(No FormStr URL)</Text>
+                )}
+              </Paragraph>
+              {formUrl && (
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={onCopy}
+                />
+              )}
+            </Space>
+          </Col>
+        )}
+      </Row>
+    </Header>
+  );
+}
+
+//
+// --- InvoiceCard Component
+//
+function InvoiceCard({
+  inv,
+  onDownload,
+}: {
+  inv: InvoiceData;
+  onDownload: (inv: InvoiceData) => void;
+}) {
+  return (
+    <Card
+      key={`${inv.authorPubkey}-${inv.invoiceNumber}-${inv.submittedAtISO}`}
+      style={{ marginBottom: 12 }}
+    >
+      <Row justify="space-between" align="middle">
+        <Col>
+          <Title level={5}>
+            {inv.clientName || "(No client)"}{" "}
+            {inv.company ? `— ${inv.company}` : ""}
+          </Title>
+          <Text>Invoice #: {inv.invoiceNumber}</Text>
+          <br />
+          <Text>
+            Date: {inv.invoiceDate} • Due: {inv.dueDate || "-"}
+          </Text>
+          <br />
+          <Text strong>Amount: {inv.totalAmount}</Text>
+          {inv.serviceDescription && (
+            <Paragraph italic style={{ marginTop: 8 }}>
+              {inv.serviceDescription}
+            </Paragraph>
+          )}
+          <Text>Payment: {inv.paymentInfo || "-"}</Text>
+          <br />
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            Submitted: {new Date(inv.submittedAtISO).toLocaleString()} • Author:{" "}
+            {inv.authorPubkey}
+          </Text>
+        </Col>
+        <Col>
+          <Button
+            type="primary"
+            icon={<DownloadOutlined />}
+            onClick={() => onDownload(inv)}
+          >
+            PDF
+          </Button>
+        </Col>
+      </Row>
+    </Card>
+  );
+}
+
+//
+// --- SetupForm Component
+//
+function SetupForm({
+  urlInput,
+  setUrlInput,
+  onCreateDefaultForm,
+  onEnterUrl,
+}: {
+  urlInput: string;
+  setUrlInput: (v: string) => void;
+  onCreateDefaultForm: () => void;
+  onEnterUrl: () => void;
+}) {
+  return (
+    <Layout style={{ minHeight: "100vh", background: "#fff" }}>
+      <Content style={{ padding: 20 }}>
+        <Title level={2}>Setup Invoice Form</Title>
+        <Paragraph>No invoice form found in local storage.</Paragraph>
+        <Space direction="vertical" style={{ width: "100%" }}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={onCreateDefaultForm}
+          >
+            Create Default Invoice Form
+          </Button>
+          <Input
+            placeholder="Enter FormStr URL"
+            value={urlInput}
+            onChange={(e) => setUrlInput(e.target.value)}
+            onPressEnter={onEnterUrl}
+          />
+          <Button onClick={onEnterUrl}>Load FormStr URL</Button>
+        </Space>
+      </Content>
+    </Layout>
+  );
+}
+
+//
+// --- Main App
+//
 function App() {
   const [pool] = useState(() => new SimplePool());
   const [events, setEvents] = useState<Event[]>([]);
   const [invoices, setInvoices] = useState<InvoiceData[]>([]);
   const [loading, setLoading] = useState(true);
   const [fieldMap, setFieldMap] = useState<FieldMap | null>(null);
+
   const [formId, setFormId] = useState("");
   const [ownerPubkey, setOwnerPubkey] = useState("");
   const [editKeyHex, setEditKeyHex] = useState("");
 
-  // 1. Fetch the form template once on mount
-  useEffect(() => {
-    fetchFormTemplate(ownerPubkey, formId, pool, editKeyHex, (formSpec) => {
-      const map = extractFieldMapFromFormSpec(formSpec);
-      console.log("✅ Extracted fieldMap:", map);
-      setFieldMap(map);
-    });
-  }, [pool]);
+  const [needsFormSetup, setNeedsFormSetup] = useState(false);
+  const [urlInput, setUrlInput] = useState("");
+  const [formUrl, setFormUrl] = useState<string | null>(null);
 
-  // 2. Once we have fieldMap, subscribe for responses
+  // --- 0. Check localStorage on mount
+  useEffect(() => {
+    const savedForms = loadFormsFromLocalStorage();
+    if (savedForms.length > 0) {
+      const form = savedForms[0];
+      setFormId(form.tags.find((t: string[]) => t[0] === "d")?.[1] || "");
+      setOwnerPubkey(form.pubkey);
+      setEditKeyHex(form.editKeyHex);
+    } else {
+      setNeedsFormSetup(true);
+    }
+  }, []);
+
+  // --- 1. Fetch the form template
+  useEffect(() => {
+    if (ownerPubkey && formId && editKeyHex)
+      fetchFormTemplate(ownerPubkey, formId, pool, editKeyHex, (formSpec) => {
+        const map = extractFieldMapFromFormSpec(formSpec);
+        setFieldMap(map);
+      });
+  }, [pool, ownerPubkey, formId, editKeyHex]);
+
+  // --- 2. Subscribe to responses
   useEffect(() => {
     if (!fieldMap) return;
     setLoading(true);
-
     const closer = fetchFormResponses(ownerPubkey, formId, pool, (ev) =>
       setEvents((prev) =>
         prev.some((e) => e.id === ev.id) ? prev : [ev, ...prev]
       )
     );
-
     return () => closer.close();
   }, [pool, fieldMap]);
 
-  // 3. Decrypt + parse events into invoices
+  // --- 3. Decrypt and parse events
   useEffect(() => {
     if (!fieldMap) return;
     let canceled = false;
@@ -49,8 +256,16 @@ function App() {
     (async () => {
       const parsed: InvoiceData[] = [];
       for (const ev of events) {
-        const inv = await decryptAndParseInvoiceEvent(ev, editKeyHex, fieldMap);
-        if (inv) parsed.push(inv);
+        try {
+          const inv = await decryptAndParseInvoiceEvent(
+            ev,
+            editKeyHex,
+            fieldMap
+          );
+          if (inv) parsed.push(inv);
+        } catch (err) {
+          console.error("Decrypt failed:", err);
+        }
       }
       if (!canceled) {
         setInvoices(parsed);
@@ -62,6 +277,27 @@ function App() {
       canceled = true;
     };
   }, [events, fieldMap]);
+
+  // --- 4. Derive formUrl whenever we have enough info
+  useEffect(() => {
+    if (formId && ownerPubkey && editKeyHex) {
+      try {
+        const naddr = naddrEncode({
+          identifier: formId,
+          pubkey: ownerPubkey,
+          kind: 30168,
+          relays: [
+            "wss://relay.damus.io",
+            "wss://relay.primal.net",
+            "wss://nos.lol",
+          ],
+        });
+        setFormUrl(`https://formstr.app/f/${naddr}#${editKeyHex}`);
+      } catch (e) {
+        console.error("Could not generate FormStr URL:", e);
+      }
+    }
+  }, [formId, ownerPubkey, editKeyHex]);
 
   const rows = useMemo(
     () =>
@@ -80,96 +316,91 @@ function App() {
     URL.revokeObjectURL(a.href);
   };
 
+  const handleCopyUrl = () => {
+    if (formUrl) {
+      navigator.clipboard.writeText(formUrl);
+      message.success("FormStr URL copied to clipboard!");
+    }
+  };
+
+  const handleCreateDefaultForm = async () => {
+    const defaultFormId = "invoice-form";
+    const { event, secretKey } = await createDefaultFormEvent(defaultFormId);
+    const editKeyHex = bytesToHex(secretKey);
+    saveFormToLocalStorage(event, editKeyHex);
+
+    setFormId(defaultFormId);
+    setEditKeyHex(editKeyHex);
+    setNeedsFormSetup(false);
+  };
+
+  const handleEnterResponseUrl = () => {
+    try {
+      const parsedUrl = new URL(urlInput);
+      const [, naddr] = parsedUrl.pathname.split("/s/");
+      const editKeyHex = parsedUrl.hash.replace("#", "");
+      const { data } = nip19.decode(naddr) as DecodedNaddr;
+      const { pubkey, identifier: formId } = data;
+
+      setFormId(formId);
+      setOwnerPubkey(pubkey);
+      setEditKeyHex(editKeyHex);
+      setNeedsFormSetup(false);
+    } catch (e) {
+      message.error("Invalid responses URL");
+    }
+  };
+
+  // --- Setup mode
+  if (needsFormSetup) {
+    return (
+      <SetupForm
+        urlInput={urlInput}
+        setUrlInput={setUrlInput}
+        onCreateDefaultForm={handleCreateDefaultForm}
+        onEnterUrl={handleEnterResponseUrl}
+      />
+    );
+  }
+
+  // --- Regular mode
   return (
-    <div style={{ padding: 20, fontFamily: "system-ui, sans-serif" }}>
-      <h1>Invoice Generator (Nostr)</h1>
-      <p>
-        Form: <code>{formId}</code> • Owner: <code>{ownerPubkey}</code>
-      </p>
-      {loading ? <p>Loading responses…</p> : null}
+    <Layout style={{ minHeight: "100vh", background: "#fff" }}>
+      <HeaderBar
+        formId={formId}
+        ownerPubkey={ownerPubkey}
+        formUrl={formUrl}
+        onCopy={handleCopyUrl}
+      />
 
-      {!rows.length && !loading ? <p>No responses found.</p> : null}
+      <Content style={{ padding: 16 }}>
+        <Card style={{ marginBottom: 16 }}>
+          <Text strong>Form ID:</Text> {formId} <br />
+          <Text strong>Owner:</Text> {ownerPubkey}
+        </Card>
 
-      <div style={{ marginBottom: 20 }}>
-        <label>
-          Form ID:{" "}
-          <input
-            type="text"
-            value={formId}
-            onChange={(e) => setFormId(e.target.value)}
-            style={{ marginRight: 10 }}
-          />
-        </label>
-        <label>
-          Owner Pubkey:{" "}
-          <input
-            type="text"
-            value={ownerPubkey}
-            onChange={(e) => setOwnerPubkey(e.target.value)}
-            style={{ marginRight: 10 }}
-          />
-        </label>
-        <label>
-          Edit Key (hex):{" "}
-          <input
-            type="text"
-            value={editKeyHex}
-            onChange={(e) => setEditKeyHex(e.target.value)}
-            style={{ marginRight: 10 }}
-          />
-        </label>
-        <button onClick={() => setEvents([])}>Load Responses</button>
-      </div>
-
-      {rows.map((inv) => (
-        <div
-          key={`${inv.authorPubkey}-${inv.invoiceNumber}-${inv.submittedAtISO}`}
-          style={{
-            border: "1px solid #ddd",
-            padding: 12,
-            marginBottom: 12,
-            borderRadius: 8,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 16,
-            }}
-          >
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 600 }}>
-                {inv.clientName || "(No client)"}{" "}
-                {inv.company ? `— ${inv.company}` : ""}
-              </div>
-              <div>Invoice #: {inv.invoiceNumber}</div>
-              <div>
-                Date: {inv.invoiceDate} • Due: {inv.dueDate || "-"}
-              </div>
-              <div>
-                Amount: <b>{inv.totalAmount}</b>
-              </div>
-              {inv.serviceDescription ? (
-                <div style={{ marginTop: 6, opacity: 0.9 }}>
-                  <i>{inv.serviceDescription}</i>
-                </div>
-              ) : null}
-              <div style={{ marginTop: 6 }}>
-                Payment: {inv.paymentInfo || "-"}
-              </div>
-            </div>
-            <div>
-              <button onClick={() => handleDownload(inv)}>Download PDF</button>
-            </div>
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 40 }}>
+            <Spin size="large" />
+            <div>Loading responses…</div>
           </div>
-          <div style={{ marginTop: 6, fontSize: 12, color: "#555" }}>
-            Submitted: {new Date(inv.submittedAtISO).toLocaleString()} • Author:{" "}
-            {inv.authorPubkey}
-          </div>
-        </div>
-      ))}
-    </div>
+        ) : !rows.length ? (
+          <Paragraph>No responses found.</Paragraph>
+        ) : (
+          <List
+            itemLayout="vertical"
+            dataSource={rows}
+            renderItem={(inv) => (
+              <InvoiceCard inv={inv} onDownload={handleDownload} />
+            )}
+          />
+        )}
+      </Content>
+
+      <Footer style={{ textAlign: "center" }}>
+        <Text type="secondary">Invoice Generator powered by Nostr</Text>
+      </Footer>
+    </Layout>
   );
 }
 

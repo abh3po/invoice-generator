@@ -80,14 +80,8 @@ export async function generateInvoicePDF(
     if (py < 80) break;
   }
 
-  // Footer
-  draw(
-    `Submitted: ${new Date(inv.submittedAtISO).toLocaleString()}`,
-    50,
-    60,
-    9
-  );
-  draw(`Author (npub/pubkey): ${inv.authorPubkey}`, 50, 46, 9);
+  // Footer (static)
+  draw("Generated via invoice.formstr.app", 200, 40, 9);
 
   const bytes = await pdf.save();
   return bytes;
